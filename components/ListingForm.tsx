@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import MapPicker from './MapPicker';
 import MediaDropzone from './MediaDropzone';
 
 const DISTRICTS = ['Кировский','Советский','Ленинский','Орджоникидзевский','Калининский','Дёмский'];
@@ -18,17 +17,23 @@ export default function ListingForm({
   const [lng, setLng] = useState<number>(initial?.lng ?? 0);
 
   const [draftId] = useState<string>(() => initial?.id ?? crypto.randomUUID());
-  const [photos, setPhotos] = useState<string[]>(initial?.photos ?? []);
-  const [videos, setVideos] = useState<string[]>(initial?.videos ?? []);
+
+  // медиа
+  const [photos, setPhotos] = useState<string[]>(Array.isArray(initial?.photos) ? initial.photos : []);
+  const [videos, setVideos] = useState<string[]>(Array.isArray(initial?.videos) ? initial.videos : []);
 
   const action = useMemo(() => {
-    if (mode === 'edit') return `/api/listings?id=${initial.id}`;
+    if (mode === 'edit') return `/api/listings?id=${initial?.id}`;
     return '/api/listings';
   }, [mode, initial]);
 
   return (
     <form className="card" action={action} method="post" style={{ maxWidth: 900 }}>
       <input type="hidden" name="id_client" value={draftId} />
+
+      {/* ✅ Гарантированно отправляем фото/видео в API как JSON */}
+      <input type="hidden" name="photos_json" value={JSON.stringify(photos ?? [])} />
+      <input type="hidden" name="videos_json" value={JSON.stringify(videos ?? [])} />
 
       <div className="stack">
         <label className="label">Заголовок</label>
@@ -44,20 +49,24 @@ export default function ListingForm({
           <div style={{ flex: 1, minWidth: 200 }}>
             <label className="label">Район</label>
             <select className="input" name="district" defaultValue={initial?.district ?? 'Советский'} required>
-              {DISTRICTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              {DISTRICTS.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
             </select>
           </div>
 
           <div style={{ flex: 1, minWidth: 220 }}>
             <label className="label">Тип объекта</label>
             <select className="input" name="property_type" defaultValue={initial?.property_type ?? '1 Комнатная'} required>
-              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
           </div>
 
           <div style={{ flex: 1, minWidth: 200 }}>
             <label className="label">Цена (₽/мес)</label>
-            <input className="input" name="price_rub" type="number" defaultValue={initial?.price_rub ?? 0} required />
+            <input className="input" name="price_rub" type="number" defaultValue={initial?.price ?? 0} required />
           </div>
         </div>
 
@@ -81,26 +90,60 @@ export default function ListingForm({
 
         <div className="divider" />
         <div className="section-title">Фото / Видео</div>
+
         <MediaDropzone
           listingId={draftId}
           photos={photos}
           videos={videos}
-          onChange={(next) => { setPhotos(next.photos); setVideos(next.videos); }}
+          onChange={(next) => {
+            setPhotos(next?.photos ?? []);
+            setVideos(next?.videos ?? []);
+          }}
         />
 
         <div className="divider" />
+
         <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <div className="label">Локация (клик по карте)</div>
-            <div className="muted">Выбирай точку в пределах Уфы.</div>
+            <div className="label">Локация (вручную)</div>
+            <div className="muted">Если не знаешь координаты — оставь 0.</div>
           </div>
-          <div className="pill">lat: {lat ? lat.toFixed(5) : '—'} • lng: {lng ? lng.toFixed(5) : '—'}</div>
+          <div className="pill">
+            lat: {lat ? lat.toFixed(5) : '—'} • lng: {lng ? lng.toFixed(5) : '—'}
+          </div>
         </div>
 
+        {/* Ручной ввод координат */}
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <label className="label">Широта (lat)</label>
+            <input
+              className="input"
+              type="number"
+              step="0.000001"
+              value={lat}
+              onChange={(e) => setLat(Number(e.target.value))}
+              placeholder="54.73..."
+            />
+          </div>
+
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <label className="label">Долгота (lng)</label>
+            <input
+              className="input"
+              type="number"
+              step="0.000001"
+              value={lng}
+              onChange={(e) => setLng(Number(e.target.value))}
+              placeholder="55.96..."
+            />
+          </div>
+        </div>
+
+        {/* hidden координаты в API */}
         <input type="hidden" name="lat" value={lat} />
         <input type="hidden" name="lng" value={lng} />
 
-        <MapPicker lat={lat} lng={lng} onPick={(a, b) => { setLat(a); setLng(b); }} />
 
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn" type="submit">Сохранить</button>

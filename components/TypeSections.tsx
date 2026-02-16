@@ -13,7 +13,7 @@ export default function TypeSections() {
   return (
     <div className="sections">
       {TYPES.map((x) => (
-        <Link key={x.type} className="section-card" href={`/?type=${encodeURIComponent(x.type)}`}>
+        <Link key={x.type} className="section-card" href={`/catalog?q=${encodeURIComponent(x.label)}`}
           <div className="section-title">{x.label}</div>
           <div className="muted">{x.hint}</div>
           <div className="section-cta">Смотреть →</div>

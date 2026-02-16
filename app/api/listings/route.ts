@@ -1,68 +1,116 @@
-import { NextResponse } from 'next/server';
-import { supabaseServer } from '@/lib/supabase/server';
+import { NextResponse } from "next/server";
+import { supabaseServer } from "@/lib/supabase/server";
 
-function safeUuid(v: string) {
-  return /^[0-9a-fA-F-]{36}$/.test(v);
+function str(fd: FormData, key: string) {
+  const v = fd.get(key);
+  return typeof v === "string" ? v.trim() : "";
+}
+function num(fd: FormData, key: string) {
+  const v = fd.get(key);
+  const n = typeof v === "string" ? Number(v) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+function jsonArr(fd: FormData, key: string): string[] {
+  const raw = str(fd, key);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((x) => typeof x === "string");
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function requireAdmin(supabase: ReturnType<typeof supabaseServer>) {
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !userData?.user) {
+    return { ok: false as const, status: 401, reason: "no-user" };
+  }
+
+  const userId = userData.user.id;
+
+  const { data: adminRow, error: adminErr } = await supabase
+    .from("admins")
+    .select("user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (adminErr || !adminRow) {
+    return { ok: false as const, status: 403, reason: "not-admin" };
+  }
+
+  return { ok: true as const, userId };
 }
 
 export async function POST(req: Request) {
   const supabase = supabaseServer();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const url = new URL(req.url);
-  const id = url.searchParams.get('id');
-
-  const form = await req.formData();
-  const methodOverride = (form.get('_method')?.toString() ?? '').toUpperCase();
-
-  // DELETE через POST (удобно для form)
-  if (methodOverride === 'DELETE' && id) {
-    const { error } = await supabase.from('listings').delete().eq('id', id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.redirect(new URL('/dashboard', req.url));
+  // 1) только админ
+  const adm = await requireAdmin(supabase);
+  if (!adm.ok) {
+    return NextResponse.json({ ok: false, reason: adm.reason }, { status: adm.status });
   }
 
-  // media from hidden inputs (JSON arrays of storage paths)
-  const photosJson = form.get('photos_json')?.toString() ?? '[]';
-  const videosJson = form.get('videos_json')?.toString() ?? '[]';
-  let photos: string[] = [];
-  let videos: string[] = [];
-  try { photos = JSON.parse(photosJson); } catch { photos = []; }
-  try { videos = JSON.parse(videosJson); } catch { videos = []; }
+  // 2) режим: create или edit
+  const url = new URL(req.url);
+  const idFromQuery = (url.searchParams.get("id") || "").trim(); // edit: /api/listings?id=UUID
 
+  const fd = await req.formData();
+  const id = (idFromQuery || str(fd, "id_client")).trim();
+
+  if (!id) return NextResponse.json({ ok: false, reason: "missing-id" }, { status: 400 });
+
+  // 3) общий payload (без id) — одинаковый для insert/update
   const payload: any = {
-    owner_id: user.id,
-    title: form.get('title')?.toString() ?? '',
-    description: form.get('description')?.toString() ?? '',
-    address: form.get('address')?.toString() ?? '',
-    city: 'Уфа',
-    district: form.get('district')?.toString() ?? 'Советский',
-    property_type: form.get('property_type')?.toString() ?? '1 Комнатная',
-    price_rub: Number(form.get('price_rub') ?? 0),
-    rooms: form.get('rooms') ? Number(form.get('rooms')) : null,
-    area_m2: form.get('area_m2') ? Number(form.get('area_m2')) : null,
-    floor: form.get('floor') ? Number(form.get('floor')) : null,
-    photos,
-    videos,
-    lat: form.get('lat') ? Number(form.get('lat')) : null,
-    lng: form.get('lng') ? Number(form.get('lng')) : null,
-    phone: form.get('phone')?.toString() ?? null,
-    status: 'active',
+    title: str(fd, "title"),
+    description: str(fd, "description"),
+    address: str(fd, "address"),
+    district: str(fd, "district"),
+    property_type: str(fd, "property_type"),
+    price: num(fd, "price_rub"),
+    rooms: num(fd, "rooms"),
+    area_m2: num(fd, "area_m2"),
+    floor: num(fd, "floor"),
+    phone: str(fd, "phone"),
+    lat: num(fd, "lat"),
+    lng: num(fd, "lng"),
+
+    // ✅ медиа
+    photos: jsonArr(fd, "photos_json"),
+    videos: jsonArr(fd, "videos_json"),
   };
 
-  // Create
-  if (!id) {
-    const idClient = (form.get('id_client')?.toString() ?? '').trim();
-    if (idClient && safeUuid(idClient)) payload.id = idClient;
-
-    const { error } = await supabase.from('listings').insert(payload);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.redirect(new URL('/dashboard', req.url));
+  if (!payload.title) {
+    return NextResponse.json({ ok: false, reason: "missing-title" }, { status: 400 });
   }
 
-  // Update (owner policy or admin policy)
-  const { error } = await supabase.from('listings').update(payload).eq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.redirect(new URL('/dashboard', req.url));
+  // 4) create → INSERT (ставим owner_id)
+  if (!idFromQuery) {
+    const insertPayload = {
+      id,
+      ...payload,
+      owner_id: adm.userId, // ✅ важно для кабинета/фильтров
+    };
+
+    const { error } = await supabase.from("objects").insert(insertPayload);
+
+    if (error) {
+      return NextResponse.json({ ok: false, reason: error.message }, { status: 400 });
+    }
+
+    return NextResponse.redirect(new URL("/admin", req.url));
+  }
+
+  // 5) edit → UPDATE (не insert!)
+  const { error } = await supabase
+    .from("objects")
+    .update(payload)
+    .eq("id", idFromQuery);
+
+  if (error) {
+    return NextResponse.json({ ok: false, reason: error.message }, { status: 400 });
+  }
+
+  return NextResponse.redirect(new URL(`/admin/edit/${idFromQuery}`, req.url));
 }

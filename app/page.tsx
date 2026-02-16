@@ -1,50 +1,58 @@
-import { supabaseServer } from '@/lib/supabase/server';
-import ListingCard from '@/components/ListingCard';
-import TypeSections from '@/components/TypeSections';
-import FilterBar from '@/components/FilterBar';
+import Link from "next/link";
+import { supabaseServer } from "@/lib/supabase/server";
 
-export default async function HomePage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
+export default async function HomePage() {
   const supabase = supabaseServer();
 
-  const q = typeof searchParams.q === 'string' ? searchParams.q : '';
-  const district = typeof searchParams.district === 'string' ? searchParams.district : '';
-  const type = typeof searchParams.type === 'string' ? searchParams.type : '';
-  const min = typeof searchParams.min === 'string' ? Number(searchParams.min) : null;
-  const max = typeof searchParams.max === 'string' ? Number(searchParams.max) : null;
-
-  let query = supabase
-    .from('listings_public')
-    .select('*')
-    .eq('city', 'Уфа')
-    .order('created_at', { ascending: false })
-    .limit(60);
-
-  if (district) query = query.eq('district', district);
-  if (type) query = query.eq('property_type', type);
-  if (min !== null && !Number.isNaN(min)) query = query.gte('price_rub', min);
-  if (max !== null && !Number.isNaN(max)) query = query.lte('price_rub', max);
-
-  if (q) {
-    const s = `%${q}%`;
-    query = query.or(`title.ilike.${s},address.ilike.${s},description.ilike.${s}`);
-  }
-
-  const { data, error } = await query;
+  const { data, error } = await supabase
+    .from("objects")
+    .select("id,title,price,created_at")
+    .order("created_at", { ascending: false })
+    .limit(3);
 
   return (
-    <div>
-      <h1 className="h1">Аренда квартир в городе Уфа</h1>
-      <p className="muted">Выбери раздел или настрой фильтры. В каталоге показываются только активные объявления.</p>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "48px 16px" }}>
+      <h1 className="h1">Аренда квартир в Уфе</h1>
+      <p className="muted">Свежие предложения на длительный срок</p>
 
-      <TypeSections />
-      <FilterBar />
+      <div style={{ marginTop: 32 }}>
+        <h2 className="h2">Свежие объявления</h2>
 
-      {error ? <p className="error">Ошибка загрузки: {error.message}</p> : null}
+        {error && <p className="error">{error.message}</p>}
 
-      <div className="grid">
-        {(data ?? []).map((x: any) => (
-          <ListingCard key={x.id} listing={x} />
-        ))}
+        {!data || data.length === 0 ? (
+          <p className="muted">Пока нет объявлений</p>
+        ) : (
+          <div className="stack">
+            {data.map((x) => (
+              <Link
+                key={x.id}
+                href={`/catalog/${x.id}`}
+                className="card"
+                style={{
+                  padding: 16,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  textDecoration: "none",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700 }}>{x.title}</div>
+                  <div className="muted">{x.price} ₽</div>
+                </div>
+
+                <span className="btn secondary">Открыть</span>
+              </Link>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 24 }}>
+          <Link href="/catalog" className="btn">
+            Смотреть все объявления
+          </Link>
+        </div>
       </div>
     </div>
   );
